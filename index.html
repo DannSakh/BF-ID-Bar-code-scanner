@@ -2,54 +2,166 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web Barcode Scanner</title>
-    <!-- Подключаем библиотеку из CDN -->
-    <script src="https://unpkg.com/html5-qrcode"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Веб-сканер ЦИФР</title>
+    
+    <script src="https://unpkg.com/tesseract.js@5.0.3/dist/tesseract.min.js"></script>
+    
     <style>
-        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f4f4f9; }
-        #reader { width: 90%; max-width: 500px; border: 2px solid #333; border-radius: 8px; overflow: hidden; }
-        #result { margin-top: 20px; padding: 15px; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); width: 80%; text-align: center; word-break: break-all; }
-        .status { color: #666; font-size: 0.9em; margin-bottom: 10px; }
+        body { margin: 0; padding: 0; background: #1a1a1a; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: space-between; height: 100vh; overflow: hidden; }
+        
+        /* Контейнер для видео и рамки */
+        #scanner-container { position: relative; width: 100%; height: 70vh; background: black; display: flex; justify-content: center; align-items: center; overflow: hidden; }
+        
+        /* Видео с камеры */
+        #video { width: 100%; height: 100%; object-fit: cover; }
+        
+        /* Наложение (Overlay) с узким окном */
+        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; }
+        
+        /* Затемнение сверху и снизу */
+        .scrim { background: rgba(0, 0, 0, 0.6); flex: 1; }
+        
+        /* Светлое, узкое окно по центру */
+        #scan-window { height: 60px; /* Высота окна */ width: 80%; /* Ширина окна */ border: 3px solid #00ff00; /* Зеленая рамка */ border-radius: 4px; position: relative; margin: 0 auto; box-shadow: 0 0 15px rgba(0,255,0,0.5); box-sizing: border-box; }
+
+        /* Нижняя панель */
+        #result-panel { width: 100%; height: 30vh; background: #2a2a2a; border-top-left-radius: 16px; border-top-right-radius: 16px; padding: 20px; box-sizing: border-box; text-align: center; }
+        
+        h2 { margin-top: 0; font-size: 1.2em; color: #aaa; }
+        #final-text { font-size: 2.5em; font-weight: bold; color: #00ff00; margin: 10px 0; min-height: 1.2em; word-break: break-all; }
+        #status { font-size: 0.9em; color: #888; }
+
+        /* Вспомогательный холст (скрыт) */
+        #canvas-helper { display: none; }
     </style>
 </head>
 <body>
 
-    <h2>Сканер штрих-кодов</h2>
-    <div class="status">Наведите камеру на код</div>
-    
-    <div id="reader"></div>
-    
-    <div id="result">
-        <strong>Результат:</strong> <span id="scanned-result">Ожидание...</span>
+    <div id="scanner-container">
+        <video id="video" autoplay playsinline muted></video>
+        <div id="overlay">
+            <div class="scrim"></div>
+            <div id="scan-window"></div>
+            <div class="scrim"></div>
+        </div>
     </div>
 
+    <div id="result-panel">
+        <h2>Распознанные цифры:</h2>
+        <div id="final-text"></div>
+        <div id="status">Инициализация...</div>
+    </div>
+
+    <canvas id="canvas-helper"></canvas>
+
     <script>
-        function onScanSuccess(decodedText, decodedResult) {
-            // Выводим результат на экран
-            document.getElementById('scanned-result').innerText = decodedText;
-            console.log(`Code matched = ${decodedText}`, decodedResult);
-            
-            // Опционально: можно остановить сканер после успешного чтения
-            // html5QrcodeScanner.clear();
-        }
-
-        function onScanFailure(error) {
-            // Ошибки (например, если код не в фокусе) логировать необязательно, 
-            // так как они возникают постоянно в процессе поиска кода
-        }
-
-        let html5QrcodeScanner = new Html5QrcodeScanner(
-            "reader", 
-            { 
-                fps: 15,    // кадров в секунду
-                qrbox: { width: 250, height: 150 }, // область сканирования
-                aspectRatio: 1.0 
-            }, 
-            /* verbose= */ false
-        );
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas-helper');
+        const finalText = document.getElementById('final-text');
+        const statusText = document.getElementById('status');
         
-        html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+        let worker = null; // Tesseract Worker
+        let isProcessing = false;
+
+        // 1. Инициализация Tesseract.js
+        async function initOCR() {
+            statusText.innerText = "Загрузка движка OCR...";
+            try {
+                // Создаем воркер. Указываем путь к core, если CDN лежит.
+                worker = await Tesseract.createWorker('eng', 1, {
+                    // logger: m => console.log(m) // Раскомментируйте для дебага в консоли
+                });
+                
+                // Настраиваем: искать только цифры
+                await worker.setParameters({
+                    tessedit_char_whitelist: '0123456789',
+                });
+                
+                statusText.innerText = "Ожидание камеры...";
+                startCamera();
+            } catch (e) {
+                statusText.innerText = "Ошибка загрузки OCR";
+                console.error(e);
+            }
+        }
+
+        // 2. Запуск камеры Android
+        function startCamera() {
+            const constraints = {
+                video: {
+                    facingMode: 'environment', // Задняя камера
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
+            };
+
+            navigator.mediaDevices.getUserMedia(constraints)
+                .then(stream => {
+                    video.srcObject = stream;
+                    statusText.innerText = "Наведите окно на цифры...";
+                    // Начинаем цикл распознавания через секунду после старта видео
+                    setTimeout(processingLoop, 1000);
+                })
+                .catch(err => {
+                    statusText.innerText = "Ошибка камеры: " + err.name;
+                    console.error(err);
+                });
+        }
+
+        // 3. Главный цикл: захват кадра и распознавание
+        async function processingLoop() {
+            if (isProcessing || !worker) return; // Если уже занят, пропускаем
+
+            isProcessing = true;
+            statusText.innerText = "Распознаю...";
+
+            // 3a. Получаем размеры узкого окна сканирования
+            const scanWindow = document.getElementById('scan-window');
+            const rect = scanWindow.getBoundingClientRect();
+            const videoRect = video.getBoundingClientRect();
+
+            // Расчитываем масштаб видео (object-fit: cover усложняет жизнь)
+            const scaleX = video.videoWidth / videoRect.width;
+            const scaleY = video.videoHeight / videoRect.height;
+
+            // Координаты окна внутри видеопотока
+            const sx = (rect.left - videoRect.left) * scaleX;
+            const sy = (rect.top - videoRect.top) * scaleY;
+            const sw = rect.width * scaleX;
+            const sh = rect.height * scaleY;
+
+            // 3b. Отрисовываем эту область на скрытый canvas
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            const ctx = canvas.getContext('2d');
+            
+            // Захватываем только область окна
+            ctx.drawImage(video, sx, sy, sw, sh, 0, 0, rect.width, rect.height);
+
+            try {
+                // 3c. Отправляем обрезанный холст в Tesseract
+                const { data: { text } } = await worker.recognize(canvas);
+                
+                // Очищаем результат (на всякий случай, хотя whitelist работает)
+                const cleanedDigits = text.replace(/\D/g, "");
+
+                if (cleanedDigits) {
+                    finalText.innerText = cleanedDigits;
+                }
+            } catch (e) {
+                console.error("OCR Error:", e);
+            }
+
+            statusText.innerText = "Готов";
+            isProcessing = false;
+            
+            // Повторяем через 1 секунду
+            setTimeout(processingLoop, 1000);
+        }
+
+        // Старт при загрузке страницы
+        window.addEventListener('load', initOCR);
     </script>
 </body>
 </html>
