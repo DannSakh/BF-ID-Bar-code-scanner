@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Barcode Scanner</title>
+    <!-- Подключаем библиотеку из CDN -->
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f4f4f9; }
+        #reader { width: 90%; max-width: 500px; border: 2px solid #333; border-radius: 8px; overflow: hidden; }
+        #result { margin-top: 20px; padding: 15px; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); width: 80%; text-align: center; word-break: break-all; }
+        .status { color: #666; font-size: 0.9em; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+    <h2>Сканер штрих-кодов</h2>
+    <div class="status">Наведите камеру на код</div>
+    
+    <div id="reader"></div>
+    
+    <div id="result">
+        <strong>Результат:</strong> <span id="scanned-result">Ожидание...</span>
+    </div>
+
+    <script>
+        function onScanSuccess(decodedText, decodedResult) {
+            // Выводим результат на экран
+            document.getElementById('scanned-result').innerText = decodedText;
+            console.log(`Code matched = ${decodedText}`, decodedResult);
+            
+            // Опционально: можно остановить сканер после успешного чтения
+            // html5QrcodeScanner.clear();
+        }
+
+        function onScanFailure(error) {
+            // Ошибки (например, если код не в фокусе) логировать необязательно, 
+            // так как они возникают постоянно в процессе поиска кода
+        }
+
+        let html5QrcodeScanner = new Html5QrcodeScanner(
+            "reader", 
+            { 
+                fps: 15,    // кадров в секунду
+                qrbox: { width: 250, height: 150 }, // область сканирования
+                aspectRatio: 1.0 
+            }, 
+            /* verbose= */ false
+        );
+        
+        html5QrcodeScanner.render(onScanSuccess, onScanFailure);
+    </script>
+</body>
+</html>
